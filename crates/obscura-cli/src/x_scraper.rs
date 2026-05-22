@@ -377,8 +377,12 @@ fn parse_user_tweets(handle: &str, user_id: &str, value: &Value, limit: usize) -
         profile.as_ref(),
         &mut seen,
         &mut tweets,
-        limit,
+        usize::MAX,
     );
+    tweets.sort_by(|left, right| {
+        status_id_sort_key(&right.status_id).cmp(&status_id_sort_key(&left.status_id))
+    });
+    tweets.truncate(limit);
     tweets
 }
 
@@ -671,6 +675,10 @@ fn normalize_space(input: &str) -> String {
     input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn status_id_sort_key(status_id: &str) -> u128 {
+    status_id.parse::<u128>().unwrap_or(0)
+}
+
 fn parse_nitter_rss(handle: &str, xml: &str, limit: usize) -> Vec<XStatusItem> {
     let handle = normalize_handle(handle);
     let mut items = Vec::new();
@@ -900,6 +908,72 @@ mod tests {
                 source: "x_web".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn parses_latest_x_user_tweets_before_older_nested_tweets() {
+        let data = json!({
+            "data": {
+                "user": {
+                    "result": {
+                        "rest_id": "44196397",
+                        "legacy": {"name": "Elon Musk"},
+                        "highlighted": {
+                            "__typename": "Tweet",
+                            "rest_id": "1519480761749016577",
+                            "core": {
+                                "user_results": {
+                                    "result": {
+                                        "rest_id": "44196397",
+                                        "core": {"screen_name": "elonmusk"}
+                                    }
+                                }
+                            },
+                            "legacy": {
+                                "created_at": "Thu Apr 28 00:56:58 +0000 2022",
+                                "full_text": "old popular tweet"
+                            }
+                        },
+                        "timeline": {
+                            "timeline": {
+                                "instructions": [{
+                                    "entries": [{
+                                        "content": {
+                                            "itemContent": {
+                                                "tweet_results": {
+                                                    "result": {
+                                                        "__typename": "Tweet",
+                                                        "rest_id": "2057327547411570907",
+                                                        "core": {
+                                                            "user_results": {
+                                                                "result": {
+                                                                    "rest_id": "44196397",
+                                                                    "core": {"screen_name": "elonmusk"}
+                                                                }
+                                                            }
+                                                        },
+                                                        "legacy": {
+                                                            "created_at": "Thu May 21 05:08:05 +0000 2026",
+                                                            "full_text": "fresh timeline tweet"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }]
+                                }]
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let items = parse_user_tweets("ElonMusk", "44196397", &data, 1);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status_id, "2057327547411570907");
+        assert_eq!(items[0].text, "fresh timeline tweet");
     }
 
     #[test]
